@@ -59,7 +59,64 @@ spec:
       - image: alpine/git:2.40.1
         imagePullPolicy: IfNotPresent
         name: git
-        command: ['sh', '-c', 'if [ ! -d "/app/blue" ]; then cd /app && rm -rf ..?* .[!.]* * && git clone --branch blue https://github.com/4linux/4linux-php.git /app; fi']
+        command:
+        - sh
+        - -c
+        - |
+          app_ok() {
+            [ -e "/app/blue" ] &&
+            [ -d "/app/fonts/font-awesome-4.7.0" ] &&
+            [ -d "/app/fonts/iconic" ] &&
+            [ -d "/app/fonts/poppins" ]
+          }
+
+          if ! app_ok; then
+            echo "Aplicação blue incompleta ou versão diferente no volume. Preparando clone..."
+
+            tentativas=0
+
+            while ! mkdir /app/.git-clone-lock 2>/dev/null; do
+              if app_ok; then
+                echo "Aplicação blue já foi corrigida por outro Pod."
+                exit 0
+              fi
+
+              tentativas=$((tentativas + 1))
+
+              if [ "$tentativas" -ge 150 ]; then
+                echo "Timeout aguardando liberação do lock."
+                exit 1
+              fi
+
+              echo "Outro Pod está populando o volume. Aguardando..."
+              sleep 2
+            done
+
+            trap 'rm -rf /app/.git-clone-lock' EXIT
+
+            if app_ok; then
+              echo "Aplicação blue já está completa."
+              exit 0
+            fi
+
+            rm -rf /tmp/4linux-php
+
+            echo "Clonando branch blue..."
+            git clone --branch blue https://github.com/4linux/4linux-php.git /tmp/4linux-php
+
+            echo "Limpando volume antigo..."
+            find /app -mindepth 1 -maxdepth 1 ! -name ".git-clone-lock" -exec rm -rf {} +
+
+            echo "Copiando arquivos da branch blue para /app..."
+            cp -a /tmp/4linux-php/. /app/
+
+            echo "Validando aplicação blue..."
+            app_ok
+
+            echo "Aplicação blue atualizada com sucesso."
+          else
+            echo "Aplicação blue já está completa no volume."
+          fi
         volumeMounts:
         - name: frontend-claim-nfs
           mountPath: /app
